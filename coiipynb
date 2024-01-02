@@ -1,0 +1,167 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "toc_visible": true,
+      "authorship_tag": "ABX9TyP65tVdrY6Due2f6NitPNoY"
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    },
+    "accelerator": "TPU"
+  },
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": 1,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "w_VdbUoQqq9N",
+        "outputId": "b2d86d19-8229-4f66-b4d4-ac3fbe8ad97f"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "\u001b[31mERROR: Could not find a version that satisfies the requirement bot (from versions: none)\u001b[0m\u001b[31m\n",
+            "\u001b[0m\u001b[31mERROR: No matching distribution found for bot\u001b[0m\u001b[31m\n",
+            "\u001b[0m"
+          ]
+        }
+      ],
+      "source": [
+        "!pip install bot\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import re\n",
+        "from variables import spotify_shortened_link_pattern, spotify_track_link_pattern, spotify_album_link_pattern, spotify_playlist_link_pattern, spotify_client_id, spotify_client_secret, welcome_message\n",
+        "import spotipy\n",
+        "from spotipy.oauth2 import SpotifyClientCredentials\n",
+        "import requests # for get_redirect_link\n",
+        "\n",
+        "def get_redirect_link(shortened_link):\n",
+        "    response = requests.head(shortened_link, allow_redirects=True)\n",
+        "    return response.url\n",
+        "\n",
+        "def get_link_type(text):\n",
+        "    if re.match(spotify_track_link_pattern, text):\n",
+        "        return \"track\"\n",
+        "    elif re.match(spotify_album_link_pattern, text):\n",
+        "        return \"album\"\n",
+        "    elif re.match(spotify_playlist_link_pattern, text):\n",
+        "        return \"playlist\"\n",
+        "    elif re.match(spotify_shortened_link_pattern, text):\n",
+        "        return \"shortened\"\n",
+        "    else:\n",
+        "        return False\n",
+        "\n",
+        "def get_valid_spotify_links(text):\n",
+        "    regexes = [spotify_shortened_link_pattern, spotify_track_link_pattern, spotify_album_link_pattern, spotify_playlist_link_pattern]\n",
+        "    # Create a compiled regular expression object\n",
+        "    # by joining the regex patterns with the OR operator |\n",
+        "    regex_combined = re.compile(\"|\".join(regexes))\n",
+        "    # Find all matches and store them in a list\n",
+        "    all_matches = [match.group() for match in regex_combined.finditer(text)]\n",
+        "    print(all_matches) # as debug\n",
+        "    return all_matches\n",
+        "\n",
+        "def get_track_ids(link):\n",
+        "    #Authentication - without user\n",
+        "    client_credentials_manager = SpotifyClientCredentials(client_id=spotify_client_id, client_secret=spotify_client_secret)\n",
+        "    sp = spotipy.Spotify(client_credentials_manager = client_credentials_manager)\n",
+        "\n",
+        "    # get id of link, album or playlist\n",
+        "    link_id = link.split(\"/\")[-1].split(\"?\")[0]\n",
+        "\n",
+        "    link_type = get_link_type(link)\n",
+        "    if link_type == \"track\":\n",
+        "        tracks = sp.track(link_id)\n",
+        "        track_ids = [tracks[\"id\"]]\n",
+        "    elif link_type == \"album\":\n",
+        "        tracks = sp.album_tracks(link_id)[\"items\"]\n",
+        "        track_ids = [t[\"id\"] for t in tracks]\n",
+        "    elif link_type == \"playlist\":\n",
+        "        # handle spotify results paginated in 100 items\n",
+        "        # https://stackoverflow.com/questions/39086287/spotipy-how-to-read-more-than-100-tracks-from-a-playlist\n",
+        "        results = sp.playlist_tracks(link_id)\n",
+        "        tracks = results['items']\n",
+        "        while results['next']:\n",
+        "            results = sp.next(results)\n",
+        "            tracks.extend(results['items'])\n",
+        "        track_ids = []\n",
+        "        for t in tracks:\n",
+        "            try:\n",
+        "                if (\"track\" in t) and (t[\"track\"] is not None) and (\"id\" in t[\"track\"]) and (t[\"track\"][\"id\"] is not None):\n",
+        "                    # due to a bug, a small number of tracks in playlists don't have\n",
+        "                    # [\"track\"][\"id\"] and cause the program to crash\n",
+        "                    # like 75th track in https://open.spotify.com/playlist/64r1Ry0JIWHboowR4LWp5R\n",
+        "                    # which is https://open.spotify.com/track/46cdw28EXOhDPnD1emDC6T\n",
+        "                    # so we check and make sure this field exists\n",
+        "                    track_ids.append(t[\"track\"][\"id\"])\n",
+        "            except:\n",
+        "                print(\"error in getting a track id\")\n",
+        "    else:\n",
+        "        return []\n",
+        "\n",
+        "    return(track_ids)\n",
+        "\n",
+        "def get_track_image(track_link):\n",
+        "    #Authentication - without user\n",
+        "    client_credentials_manager = SpotifyClientCredentials(client_id=spotify_client_id, client_secret=spotify_client_secret)\n",
+        "    sp = spotipy.Spotify(client_credentials_manager = client_credentials_manager)\n",
+        "\n",
+        "    track_id = track_link.split(\"/\")[-1].split(\"?\")[0]\n",
+        "    track = sp.track(track_id)\n",
+        "    cover_image_url = track['album']['images'][0]['url']\n",
+        "\n",
+        "    return cover_image_url\n",
+        "\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 401
+        },
+        "id": "dqD95Y1Qq5HI",
+        "outputId": "247063a3-2c42-4bb6-9320-9ecff3b068de"
+      },
+      "execution_count": 2,
+      "outputs": [
+        {
+          "output_type": "error",
+          "ename": "ModuleNotFoundError",
+          "evalue": "ignored",
+          "traceback": [
+            "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+            "\u001b[0;31mModuleNotFoundError\u001b[0m                       Traceback (most recent call last)",
+            "\u001b[0;32m<ipython-input-2-4b739ba0731b>\u001b[0m in \u001b[0;36m<cell line: 2>\u001b[0;34m()\u001b[0m\n\u001b[1;32m      1\u001b[0m \u001b[0;32mimport\u001b[0m \u001b[0mre\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m----> 2\u001b[0;31m \u001b[0;32mfrom\u001b[0m \u001b[0mvariables\u001b[0m \u001b[0;32mimport\u001b[0m \u001b[0mspotify_shortened_link_pattern\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mspotify_track_link_pattern\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mspotify_album_link_pattern\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mspotify_playlist_link_pattern\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mspotify_client_id\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mspotify_client_secret\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mwelcome_message\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m      3\u001b[0m \u001b[0;32mimport\u001b[0m \u001b[0mspotipy\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      4\u001b[0m \u001b[0;32mfrom\u001b[0m \u001b[0mspotipy\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0moauth2\u001b[0m \u001b[0;32mimport\u001b[0m \u001b[0mSpotifyClientCredentials\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      5\u001b[0m \u001b[0;32mimport\u001b[0m \u001b[0mrequests\u001b[0m \u001b[0;31m# for get_redirect_link\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+            "\u001b[0;31mModuleNotFoundError\u001b[0m: No module named 'variables'",
+            "",
+            "\u001b[0;31m---------------------------------------------------------------------------\u001b[0;32m\nNOTE: If your import is failing due to a missing package, you can\nmanually install dependencies using either !pip or !apt.\n\nTo view examples of installing some common dependencies, click the\n\"Open Examples\" button below.\n\u001b[0;31m---------------------------------------------------------------------------\u001b[0m\n"
+          ],
+          "errorDetails": {
+            "actions": [
+              {
+                "action": "open_url",
+                "actionText": "Open Examples",
+                "url": "/notebooks/snippets/importing_libraries.ipynb"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
